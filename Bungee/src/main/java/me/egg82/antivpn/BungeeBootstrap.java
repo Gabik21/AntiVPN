@@ -37,7 +37,6 @@ public class BungeeBootstrap extends Plugin {
 
         concrete = new AntiVPN(this);
 
-        concrete.onLoad();
     }
 
     @Override

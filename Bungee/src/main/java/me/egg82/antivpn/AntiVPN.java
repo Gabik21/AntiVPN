@@ -9,12 +9,11 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.logging.Level;
+
 import me.egg82.antivpn.commands.AntiVPNCommand;
 import me.egg82.antivpn.core.SQLFetchResult;
 import me.egg82.antivpn.enums.SQLType;
-import me.egg82.antivpn.events.PostLoginCheckHandler;
-import me.egg82.antivpn.events.PostLoginUpdateNotifyHandler;
+import me.egg82.antivpn.events.LoginCheckHandler;
 import me.egg82.antivpn.extended.CachedConfigValues;
 import me.egg82.antivpn.extended.Configuration;
 import me.egg82.antivpn.extended.RabbitMQReceiver;
@@ -28,13 +27,12 @@ import me.egg82.antivpn.utils.ConfigurationFileUtil;
 import me.egg82.antivpn.utils.LogUtil;
 import me.egg82.antivpn.utils.ValidationUtil;
 import net.md_5.bungee.api.ChatColor;
+import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.chat.TextComponent;
-import net.md_5.bungee.api.event.PostLoginEvent;
 import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.api.plugin.PluginManager;
-import net.md_5.bungee.event.EventPriority;
+import net.md_5.bungee.api.scheduler.ScheduledTask;
 import ninja.egg82.events.BungeeEventSubscriber;
-import ninja.egg82.events.BungeeEvents;
 import ninja.egg82.service.ServiceLocator;
 import ninja.egg82.service.ServiceNotFoundException;
 import ninja.egg82.updater.BungeeUpdater;
@@ -47,6 +45,8 @@ public class AntiVPN {
 
     private ExecutorService workPool = null;
 
+    private ScheduledTask updateTask;
+
     private BungeeCommandManager commandManager;
 
     private List<BungeeEventSubscriber<?>> events = new ArrayList<>();
@@ -57,15 +57,6 @@ public class AntiVPN {
 
     public AntiVPN(Plugin plugin) {
         this.plugin = plugin;
-    }
-
-    public void onLoad() {
-        if (!plugin.getProxy().getName().equalsIgnoreCase("waterfall")) {
-            plugin.getProxy().getLogger().log(Level.INFO, ChatColor.AQUA + "====================================");
-            plugin.getProxy().getLogger().log(Level.INFO, ChatColor.YELLOW + "Anti-VPN runs better on Waterfall!");
-            plugin.getProxy().getLogger().log(Level.INFO, ChatColor.YELLOW + "https://whypaper.emc.gs/");
-            plugin.getProxy().getLogger().log(Level.INFO, ChatColor.AQUA + "====================================");
-        }
     }
 
     public void onEnable() {
@@ -186,14 +177,7 @@ public class AntiVPN {
     }
 
     private void updateSQL() {
-        workPool.submit(() -> {
-            try {
-                Thread.sleep(10000L);
-            } catch (InterruptedException ex) {
-                logger.error(ex.getMessage(), ex);
-                Thread.currentThread().interrupt();
-            }
-
+        updateTask = plugin.getProxy().getScheduler().schedule(plugin, () -> {
             Configuration config;
             CachedConfigValues cachedConfig;
 
@@ -222,8 +206,7 @@ public class AntiVPN {
                 Thread.currentThread().interrupt();
             }
 
-            updateSQL();
-        });
+        }, 10, TimeUnit.SECONDS);
     }
 
     private void loadCommands() {
@@ -263,8 +246,8 @@ public class AntiVPN {
     }
 
     private void loadEvents() {
-        events.add(BungeeEvents.subscribe(plugin, PostLoginEvent.class, EventPriority.LOWEST).handler(e -> new PostLoginCheckHandler().accept(e)));
-        events.add(BungeeEvents.subscribe(plugin, PostLoginEvent.class, EventPriority.LOW).handler(e -> new PostLoginUpdateNotifyHandler().accept(e)));
+        ProxyServer.getInstance().getPluginManager().registerListener(plugin, new LoginCheckHandler(plugin));
+        //events.add(BungeeEvents.subscribe(plugin, PostLoginEvent.class, EventPriority.LOW).handler(e -> new PostLoginUpdateNotifyHandler().accept(e)));
     }
 
     private void loadHooks() {
@@ -438,6 +421,8 @@ public class AntiVPN {
     }
 
     public void unloadServices() {
+        updateTask.cancel();
+
         CachedConfigValues cachedConfig;
         RabbitMQReceiver rabbitReceiver;
 
@@ -458,6 +443,7 @@ public class AntiVPN {
         try {
             rabbitReceiver.close();
         } catch (IOException | TimeoutException ignored) {}
+
 
         if (!workPool.isShutdown()) {
             workPool.shutdown();
